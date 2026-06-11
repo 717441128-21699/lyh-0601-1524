@@ -30,6 +30,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import dayjs from 'dayjs';
+import { useNavigate } from 'react-router-dom';
 import { useDispatchStore } from '@/store/dispatchStore';
 import { Modal } from '@/components/ui/Modal';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -84,7 +85,8 @@ const TIME_OPTIONS = [
 ];
 
 export default function TaskCreate() {
-  const { robots, tasks, assignBestRobot, addLog } = useDispatchStore();
+  const { robots, tasks, addTask, assignBestRobot } = useDispatchStore();
+  const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [showResult, setShowResult] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -167,13 +169,6 @@ export default function TaskCreate() {
     const codeNum = tasks.length + 1;
     const newCode = `TK${String(codeNum).padStart(5, '0')}`;
 
-    addLog({
-      type: 'task',
-      level: 'info',
-      message: `新建任务 ${newCode}（${TASK_TYPE_LABELS[taskType].name}）创建中...`,
-      relatedId: newTaskId,
-    });
-
     await new Promise((r) => setTimeout(r, 1200));
 
     const cargo: Cargo = {
@@ -220,14 +215,14 @@ export default function TaskCreate() {
       dueTime: startTime.add(timeLimit, 'minute').toISOString(),
       confirmTime: null,
       signer: null,
-      approvals: isNarcotic ? [] : [],
-      transferHistory: [],
+      approvals: [] as { level: 1 | 2 | 3; approverRole: string; approverName: string; time: string; verified: boolean }[],
+      transferHistory: [] as { fromRobotId: string; toRobotId: string; reason: 'low_battery' | 'fault'; time: string }[],
       currentRoute: route,
       routeProgress: 0,
       estimatedArrival: startTime.add(timeLimit - 5, 'minute').toISOString(),
       reminderCount: 0,
     };
-    (tasks as any).unshift(newTask);
+    addTask(newTask);
 
     setTimeout(() => {
       const robotId = assignBestRobot(newTaskId);
@@ -1063,7 +1058,7 @@ export default function TaskCreate() {
               继续新建
             </button>
             <button
-              onClick={() => setShowResult(false)}
+              onClick={() => { setShowResult(false); navigate('/tasks'); }}
               className="h-11 px-6 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-500 text-white hover:from-cyan-400 hover:to-blue-400 shadow-lg shadow-cyan-500/25 text-sm font-semibold transition-all"
             >
               返回任务中心

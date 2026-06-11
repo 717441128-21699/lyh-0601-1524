@@ -20,10 +20,10 @@ import dayjs from 'dayjs';
 import { DataCard } from '@/components/ui/DataCard';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { cn } from '@/utils/format';
-import { createInitialFaultOrders, createInitialEngineers } from '@/utils/mock';
 import { FAULT_CODE_MAP, ENGINEER_NAMES } from '@/utils/constants';
 import type { FaultOrder, FaultLevel, FaultStatus } from '@/types';
 import { getAreaName, formatDateTime } from '@/utils/format';
+import { useDispatchStore } from '@/store/dispatchStore';
 
 type TabKey = 'active' | 'orders' | 'kb';
 
@@ -97,9 +97,8 @@ const kbItems = [
 ];
 
 export default function FaultCenter() {
+  const { faultOrders, engineers, dispatchFault } = useDispatchStore();
   const [activeTab, setActiveTab] = useState<TabKey>('active');
-  const [faultOrders] = useState<FaultOrder[]>(createInitialFaultOrders());
-  const [engineers] = useState(createInitialEngineers());
   const [expandedKb, setExpandedKb] = useState<string | null>('E003');
   const [kbSearch, setKbSearch] = useState('');
   const [orderFilter, setOrderFilter] = useState<FaultStatus | 'all'>('all');
@@ -146,7 +145,7 @@ export default function FaultCenter() {
 
   const handleDispatch = (orderId: string, robotCode: string) => {
     const eng = selectedEngineer[orderId] || ENGINEER_NAMES[0];
-    alert(`已将故障单 (${robotCode}) 派单给工程师：${eng}`);
+    dispatchFault(orderId, eng);
   };
 
   const statsCards = [

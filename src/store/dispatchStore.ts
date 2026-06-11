@@ -39,6 +39,10 @@ interface DispatchState {
   transferTask: (taskId: string, reason: 'low_battery' | 'fault') => void;
   approveNarcotic: (taskId: string, level: 1 | 2 | 3, approverRole: string, approverName: string) => void;
   resolveFault: (orderId: string, engineer: string) => void;
+  cancelTask: (taskId: string) => void;
+  cancelTasks: (taskIds: string[]) => void;
+  addTask: (task: Task) => void;
+  dispatchFault: (orderId: string, engineerName: string) => void;
   addLog: (entry: Omit<LogEntry, 'id' | 'timestamp'>) => void;
   markTaskArrivedTimeout: () => void;
 }
@@ -261,6 +265,65 @@ export const useDispatchStore = create<DispatchState>((set, get) => ({
     });
   },
 
+  cancelTask: (taskId) => {
+    const { tasks, robots, addLog } = get();
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return;
+    const robotId = task.assignedRobotId;
+    set((s) => ({
+      tasks: s.tasks.map((t) =>
+        t.id === taskId ? { ...t, status: 'cancelled' as const, assignedRobotId: null } : t
+      ),
+      robots: s.robots.map((r) =>
+        r.id === robotId ? { ...r, status: 'idle' as const, currentTaskId: null, cargo: null } : r
+      ),
+    }));
+    addLog({
+      type: 'task',
+      level: 'warning',
+      message: `任务 ${task.code} 已取消${robotId ? `，${robots.find((r) => r.id === robotId)?.code ?? ''} 已释放` : ''}`,
+      relatedId: taskId,
+    });
+  },
+
+  cancelTasks: (taskIds) => {
+    const { cancelTask } = get();
+    taskIds.forEach((id) => cancelTask(id));
+  },
+
+  addTask: (task) => {
+    set((s) => ({
+      tasks: [task, ...s.tasks],
+    }));
+    get().addLog({
+      type: 'task',
+      level: 'info',
+      message: `新建任务 ${task.code}（${task.type}）已加入调度队列`,
+      relatedId: task.id,
+    });
+  },
+
+  dispatchFault: (orderId, engineerName) => {
+    const { faultOrders, engineers, addLog } = get();
+    const order = faultOrders.find((f) => f.id === orderId);
+    if (!order) return;
+    const eng = engineers.find((e) => e.name === engineerName);
+    set((s) => ({
+      faultOrders: s.faultOrders.map((f) =>
+        f.id === orderId ? { ...f, status: 'assigned' as const, assignedEngineer: engineerName } : f
+      ),
+      engineers: s.engineers.map((e) =>
+        e.id === eng?.id ? { ...e, status: 'busy' as const, currentOrderId: orderId } : e
+      ),
+    }));
+    addLog({
+      type: 'fault',
+      level: 'info',
+      message: `故障工单 ${order.robotCode}-${order.faultCode} 已派单给工程师 ${engineerName}`,
+      relatedId: orderId,
+    });
+  },
+
   addLog: (entry) => {
     set((s) => ({
       logs: [
@@ -400,6 +463,19 @@ export const useDispatchStore = create<DispatchState>((set, get) => ({
         }
       });
 
+      const getTaskPriority = (robot: Robot): number => {
+        const task = newTasks.find((t) => t.assignedRobotId === robot.id);
+        if (!task) return 99;
+        const typePriority: Record<string, number> = {
+          emergency_lab: 1,
+          narcotic: 2,
+          regular_med: 3,
+          supply: 4,
+          sample: 5,
+        };
+        return (typePriority[task.type] ?? 5) * 10 + task.priority;
+      };
+
       for (let i = 0; i < newRobots.length; i++) {
         for (let j = i + 1; j < newRobots.length; j++) {
           const a = newRobots[i];
@@ -407,18 +483,26 @@ export const useDispatchStore = create<DispatchState>((set, get) => ({
           const d = euclideanDistance(a.position, b.position);
           const aS = a.status as string;
           const bS = b.status as string;
-          if (d < COLLISION_DISTANCE_THRESHOLD && ['working', 'delivering', 'picking'].includes(aS) && ['working', 'delivering', 'picking'].includes(bS)) {
+          if (d < COLLISION_DISTANCE_THRESHOLD && ['working', 'delivering', 'picking', 'avoiding'].includes(aS) && ['working', 'delivering', 'picking', 'avoiding'].includes(bS)) {
+            const priA = getTaskPriority(a);
+            const priB = getTaskPriority(b);
+            const lowerPriRobot = priA > priB ? a : priA < priB ? b : (a.battery < b.battery ? a : b);
+            const higherPriRobot = lowerPriRobot.id === a.id ? b : a;
+            const isDetour = d < COLLISION_DISTANCE_THRESHOLD * 0.5;
             newCollisions.push({
               robotAId: a.id,
               robotBId: b.id,
               position: { x: (a.position.x + b.position.x) / 2, y: 0, z: (a.position.z + b.position.z) / 2, area: 'corridor' },
               time: new Date().toISOString(),
               resolved: false,
-              resolution: Math.random() > 0.4 ? 'detour' : 'wait',
-              waitingRobotId: Math.random() > 0.5 ? a.id : b.id,
+              resolution: isDetour ? 'detour' : 'wait',
+              waitingRobotId: lowerPriRobot.id,
             });
-            newRobots[i] = { ...a, status: 'avoiding' };
-            newRobots[j] = { ...b, status: 'avoiding' };
+            if (lowerPriRobot.id === a.id) {
+              newRobots[i] = { ...a, status: 'avoiding' };
+            } else {
+              newRobots[j] = { ...b, status: 'avoiding' };
+            }
           }
         }
       }
@@ -429,6 +513,27 @@ export const useDispatchStore = create<DispatchState>((set, get) => ({
           setTimeout(() => get().transferTask(r.currentTaskId!, 'low_battery'), 0);
         }
       });
+
+      const newLogs: Omit<LogEntry, 'id' | 'timestamp'>[] = [];
+      newCollisions.forEach((c) => {
+        const robotA = newRobots.find((r) => r.id === c.robotAId);
+        const robotB = newRobots.find((r) => r.id === c.robotBId);
+        const waitingRobot = c.waitingRobotId === c.robotAId ? robotA : robotB;
+        const passingRobot = c.waitingRobotId === c.robotAId ? robotB : robotA;
+        const action = c.resolution === 'detour' ? '绕行避让' : '等待让行';
+        newLogs.push({
+          type: 'system',
+          level: 'warning',
+          message: `避让事件：${waitingRobot?.code ?? '?'} ${action}，${passingRobot?.code ?? '?'} 优先通过`,
+          relatedId: c.waitingRobotId,
+        });
+      });
+
+      if (newCollisions.length > 0) {
+        setTimeout(() => {
+          newLogs.forEach((l) => get().addLog(l));
+        }, 0);
+      }
 
       return {
         robots: newRobots,

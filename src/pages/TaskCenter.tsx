@@ -59,7 +59,7 @@ const TAB_CONFIG: { key: TabKey; label: string; icon: typeof Search; statuses: T
 ];
 
 export default function TaskCenter() {
-  const { tasks, robots, assignBestRobot, addLog } = useDispatchStore();
+  const { tasks, robots, assignBestRobot, cancelTask, cancelTasks, addLog } = useDispatchStore();
   const [activeTab, setActiveTab] = useState<TabKey>('all');
   const [searchText, setSearchText] = useState('');
   const [showFilters, setShowFilters] = useState(false);
@@ -197,11 +197,11 @@ export default function TaskCenter() {
   };
 
   const handleBatchCancel = () => {
-    addLog({
-      type: 'task',
-      level: 'warning',
-      message: `批量取消 ${selectedIds.size} 个任务`,
+    const ids = Array.from(selectedIds).filter((id) => {
+      const t = tasks.find((x) => x.id === id);
+      return t && !['confirmed', 'cancelled'].includes(t.status);
     });
+    cancelTasks(ids);
     setBatchModal(null);
     setSelectedIds(new Set());
   };
@@ -650,6 +650,7 @@ export default function TaskCenter() {
                           )}
                           {!['confirmed', 'cancelled'].includes(task.status) && (
                             <button
+                              onClick={() => cancelTask(task.id)}
                               className="p-1.5 rounded-md hover:bg-red-500/20 text-slate-400 hover:text-red-400 transition-colors"
                               title="取消任务"
                             >

@@ -178,11 +178,13 @@ export const exportToExcel = async (
   const report = generateDailyReport(options);
   const wb = XLSX.utils.book_new();
 
-  const transportWs = createTransportSheet(report);
-  XLSX.utils.book_append_sheet(wb, transportWs, '运输概览');
+  if (options.reportTypes.includes('transport')) {
+    const transportWs = createTransportSheet(report);
+    XLSX.utils.book_append_sheet(wb, transportWs, '运输概览');
 
-  const robotDetailWs = createRobotDetailSheet(report);
-  XLSX.utils.book_append_sheet(wb, robotDetailWs, '机器人明细');
+    const robotDetailWs = createRobotDetailSheet(report);
+    XLSX.utils.book_append_sheet(wb, robotDetailWs, '机器人明细');
+  }
 
   if (options.reportTypes.includes('battery')) {
     const batteryWs = createBatterySheet(report);
